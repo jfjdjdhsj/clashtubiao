@@ -11,7 +11,7 @@ QL_START_SCRIPT="/root/ql.sh"           # 青龙面板启动脚本的最终位�
 QL_AUTOSTART_LOG="/var/log/qinglong_autostart.log" # 自启动日志文件
 
 # URL for script update
-UPDATE_URL="https://raw.githubusercontent.com/jfjdjdhsj/clashtubiao/refs/heads/main/ql.sh"
+UPDATE_URL="https://raw.githubusercontent.com/jfjdjdhsj/clashtubiao/refs/heads/main/qlmb.sh"
 SCRIPT_NAME=$(basename "$0") # Get the script's filename
 SCRIPT_PATH=$(readlink -f "$0") # Get the script's absolute path
 
