@@ -4,6 +4,7 @@
 WEBUI_INSTALL_PYTHON_VERSION="3.11.11"
 VENV_NAME="open.venv"
 WEBUI_CURRENT_DIR="$(pwd)"
+LOG_FILE="${WEBUI_CURRENT_DIR}/open-webui.log"
 UPDATE_URL="https://raw.githubusercontent.com/jfjdjdhsj/clashtubiao/refs/heads/main/open.sh"
 SCRIPT_PATH=$(readlink -f "$0")
 
@@ -15,34 +16,32 @@ display_menu() {
     echo "--- Open-WebUI 管理菜单 ---"
     echo "1. install          - 安装 Open-WebUI"
     echo "2. uninstall        - 卸载 Open-WebUI"
-    echo "3. start            - 启动 Open-WebUI 服务(后台运行)"
+    echo "3. start            - 启动 Open-WebUI (后台+实时日志)"
     echo "4. stop             - 停止 Open-WebUI 服务"
-    echo "5. set_autostart    - 设置 Open-WebUI 开机自启动"
-    echo "6. remove_autostart - 去除 Open-WebUI 开机自启动"
-    echo "7. update           - 更新当前管理脚本"
+    echo "5. set_autostart    - 设置开机自启动"
+    echo "6. remove_autostart - 去除开机自启动"
+    echo "7. update           - 更新管理脚本"
     echo "8. exit             - 退出脚本"
-    echo "--------------------------------------------"
-    echo -n "请输入你的选择 (1-8 或命令名称): "
+    echo "---------------------------------------------"
+    echo -n "请输入选择 (1-8 或命令名称): "
 }
 
 # ================== 功能实现 ==================
 install_webui() {
-    # 检测虚拟环境
     if [ -n "$VIRTUAL_ENV" ]; then
-        echo "⚠️ 检测到当前已在虚拟环境中：$VIRTUAL_ENV"
-        echo "请退出虚拟环境后再执行安装。"
+        echo "⚠️ 检测到已在虚拟环境中：$VIRTUAL_ENV"
+        echo "请退出虚拟环境后再安装。"
         return 1
     fi
-
     echo "--- 开始安装 Open-WebUI ---"
 
-    # 1. 检查并安装 uv
+    # 1. 安装 uv
     if ! command_exists uv; then
         echo "安装 uv..."
         pip install uv --break-system-packages || { echo "❌ uv 安装失败"; return 1; }
     fi
 
-    # 2. 检查并安装指定版本的 Python
+    # 2. 安装指定版本 Python
     if ! uv python list --json 2>/dev/null | grep -q "\"version\": \"${WEBUI_INSTALL_PYTHON_VERSION}\""; then
         echo "安装 Python ${WEBUI_INSTALL_PYTHON_VERSION}..."
         uv python install "${WEBUI_INSTALL_PYTHON_VERSION}" || { echo "❌ Python 安装失败"; return 1; }
@@ -63,22 +62,37 @@ install_webui() {
 }
 
 uninstall_webui() {
-    echo "--- 开始卸载 Open-WebUI ---"
+    echo "--- 卸载 Open-WebUI ---"
     deactivate 2>/dev/null
     rm -rf "${VENV_NAME}" && echo "✅ 虚拟环境已删除。" || echo "⚠️ 未找到虚拟环境。"
 }
 
 start_webui() {
-    echo "--- 启动 Open-WebUI (后台运行) ---"
+    echo "--- 启动 Open-WebUI (后台+实时日志) ---"
     if [ ! -f "${VENV_NAME}/bin/activate" ]; then
         echo "❌ 未找到虚拟环境，请先安装。"; return 1
     fi
     source "${VENV_NAME}/bin/activate"
     export RAG_EMBEDDING_ENGINE=ollama
     export AUDIO_STT_ENGINE=openai
-    nohup open-webui serve >> open-webui.log 2>&1 &
+
+    # 停止已有进程
+    PID=$(pgrep -f "open-webui serve")
+    if [ -n "$PID" ]; then
+        echo "⚠️ 检测到已有进程，先停止..."
+        kill "$PID"
+        sleep 2
+    fi
+
+    # 后台启动并实时输出日志
+    echo "日志文件: $LOG_FILE"
+    nohup open-webui serve >> "$LOG_FILE" 2>&1 &
+    WEBUI_PID=$!
+    echo "✅ 已后台启动 (PID: $WEBUI_PID)"
+    echo "按 Ctrl+C 可停止日志输出，服务继续运行。"
+    sleep 1
+    tail -f "$LOG_FILE"
     deactivate
-    echo "✅ 已后台启动 Open-WebUI，日志见 open-webui.log"
 }
 
 stop_webui() {
@@ -92,7 +106,7 @@ stop_webui() {
 
 set_autostart() {
     echo "--- 设置开机自启动 ---"
-    CMD="@reboot cd ${WEBUI_CURRENT_DIR} && source ${WEBUI_CURRENT_DIR}/${VENV_NAME}/bin/activate && RAG_EMBEDDING_ENGINE=ollama AUDIO_STT_ENGINE=openai nohup open-webui serve >> ${WEBUI_CURRENT_DIR}/open-webui.log 2>&1 &"
+    CMD="@reboot cd ${WEBUI_CURRENT_DIR} && source ${WEBUI_CURRENT_DIR}/${VENV_NAME}/bin/activate && RAG_EMBEDDING_ENGINE=ollama AUDIO_STT_ENGINE=openai nohup open-webui serve >> ${LOG_FILE} 2>&1 &"
     (crontab -l 2>/dev/null | grep -v "open-webui" ; echo "$CMD") | crontab -
     echo "✅ 已设置开机自启动。"
 }
