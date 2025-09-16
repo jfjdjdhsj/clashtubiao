@@ -16,7 +16,7 @@ display_menu() {
     echo "--- Open-WebUI 管理菜单 ---"
     echo "1. install          - 安装 Open-WebUI"
     echo "2. uninstall        - 卸载 Open-WebUI"
-    echo "3. start            - 启动 Open-WebUI (后台+实时日志)"
+    echo "3. start            - 启动 Open-WebUI (日志直接输出到控制台)"
     echo "4. stop             - 停止 Open-WebUI 服务"
     echo "5. set_autostart    - 设置开机自启动"
     echo "6. remove_autostart - 去除开机自启动"
@@ -68,7 +68,7 @@ uninstall_webui() {
 }
 
 start_webui() {
-    echo "--- 启动 Open-WebUI (后台+实时日志) ---"
+    echo "--- 启动 Open-WebUI (日志直接输出到控制台) ---"
     if [ ! -f "${VENV_NAME}/bin/activate" ]; then
         echo "❌ 未找到虚拟环境，请先安装。"; return 1
     fi
@@ -84,14 +84,10 @@ start_webui() {
         sleep 2
     fi
 
-    # 后台启动并实时输出日志
-    echo "日志文件: $LOG_FILE"
-    nohup open-webui serve >> "$LOG_FILE" 2>&1 &
-    WEBUI_PID=$!
-    echo "✅ 已后台启动 (PID: $WEBUI_PID)"
-    echo "按 Ctrl+C 可停止日志输出，服务继续运行。"
-    sleep 1
-    tail -f "$LOG_FILE"
+    echo "✅ 服务已启动，日志如下（按 Ctrl+C 停止服务）"
+    # 前台启动：日志直接输出到终端，同时保存到文件
+    exec open-webui serve 2>&1 | tee -a "$LOG_FILE"
+
     deactivate
 }
 
@@ -106,7 +102,7 @@ stop_webui() {
 
 set_autostart() {
     echo "--- 设置开机自启动 ---"
-    CMD="@reboot cd ${WEBUI_CURRENT_DIR} && source ${WEBUI_CURRENT_DIR}/${VENV_NAME}/bin/activate && RAG_EMBEDDING_ENGINE=ollama AUDIO_STT_ENGINE=openai nohup open-webui serve >> ${LOG_FILE} 2>&1 &"
+    CMD="@reboot cd ${WEBUI_CURRENT_DIR} && source ${WEBUI_CURRENT_DIR}/${VENV_NAME}/bin/activate && RAG_EMBEDDING_ENGINE=ollama AUDIO_STT_ENGINE=openai open-webui serve >> ${LOG_FILE} 2>&1 &"
     (crontab -l 2>/dev/null | grep -v "open-webui" ; echo "$CMD") | crontab -
     echo "✅ 已设置开机自启动。"
 }
