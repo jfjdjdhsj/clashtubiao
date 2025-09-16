@@ -4,10 +4,11 @@ set -e # 任何命令失败时立即退出脚本 (在函数内部，如果函数
 # --- 配置变量 ---
 QL_DIR="/ql"                            # 青龙面板安装目录
 VENV_NAME="open.venv"                   # Python 虚拟环境名称
-VENV_PATH="${QL_DIR}/${VENV_NAME}"      # Python 虚拟环境绝对路径 (修改为在QL_DIR下)
+VENV_PATH="${QL_DIR}/${VENV_NAME}"      # Python 虚拟环境绝对路径 (在QL_DIR下)
 QL_STATIC_TEMP_DIR="/tmp/qinglong_static_temp" # 临时静态资源下载目录
 NODEJS_VERSION="20.x"                   # Node.js 版本
 QL_START_SCRIPT="/root/ql.sh"           # 青龙面板启动脚本的最终位置
+QL_AUTOSTART_LOG="/var/log/qinglong_autostart.log" # 自启动日志文件
 
 # URL for script update
 UPDATE_URL="https://raw.githubusercontent.com/jfjdjdhsj/clashtubiao/refs/heads/main/ql.sh"
@@ -34,15 +35,25 @@ command_exists() {
 display_menu() {
     echo ""
     echo "--- 青龙面板管理菜单 ---"
-    echo "1. install      - 安装青龙面板"
-    echo "2. uninstall    - 卸载青龙面板"
-    echo "3. start        - 启动青龙面板服务"
-    echo "4. stop         - 停止青龙面板服务"
-    echo "5. autostart    - 显示青龙面板自启动配置的说明"
-    echo "6. update       - 更新当前管理脚本"
-    echo "7. exit         - 退出脚本"
+    echo "1. install          - 安装青龙面板"
+    echo "2. uninstall        - 卸载青龙面板"
+    echo "3. start            - 启动青龙面板服务并显示日志"
+    echo "4. stop             - 停止青龙面板服务"
+    echo "5. set_autostart    - 设置青龙面板开机自启动"
+    echo "6. remove_autostart - 去除青龙面板开机自启动"
+    echo "7. update           - 更新当前管理脚本"
+    echo "8. exit             - 退出脚本"
     echo "--------------------------"
-    echo -n "请输入你的选择 (1-7 或命令名称): "
+    echo -n "请输入你的选择 (1-8 或命令名称): "
+}
+
+# 检查当前是否在虚拟环境中，如果是则退出
+check_and_deactivate_venv() {
+    if [ -n "$VIRTUAL_ENV" ]; then
+        echo "检测到当前处于虚拟环境 '$VIRTUAL_ENV'。正在退出..."
+        deactivate 2>/dev/null
+        echo "已退出虚拟环境。"
+    fi
 }
 
 # --- 青龙面板操作函数 ---
@@ -51,6 +62,9 @@ display_menu() {
 install_qinglong() {
     if ! check_root; then return 1; fi
     echo "--- 开始安装青龙面板 ---"
+
+    # 在安装前检查并退出任何活动虚拟环境
+    check_and_deactivate_venv
 
     # 1. 检查并安装 Git
     echo "--- 1. 检查并安装 Git ---"
@@ -95,7 +109,7 @@ install_qinglong() {
     source "$VENV_PATH/bin/activate"
     echo "虚拟环境已激活 (当前会话)。"
 
-    echo "--- 将虚拟环境激活命令添加到 ~/.bashrc (开机启动) ---"
+    echo "--- 将虚拟环境激活命令添加到 ~/.bashrc ---"
     # 确保添加到 ~/.bashrc 的是绝对路径
     if ! grep -q "source $VENV_PATH/bin/activate" ~/.bashrc; then
         echo "source $VENV_PATH/bin/activate" >> ~/.bashrc
@@ -202,6 +216,7 @@ install_qinglong() {
     cp "$QL_DIR"/docker/docker-entrypoint.sh "$QL_START_SCRIPT"
     chmod +x "$QL_START_SCRIPT"
     echo "青龙面板安装完成。你可以使用 './$SCRIPT_NAME start' 启动它。"
+    echo "如果需要开机自启动，请选择菜单中的 '设置开机自启动' 选项。"
 }
 
 # 卸载青龙面板
@@ -213,7 +228,11 @@ uninstall_qinglong() {
     stop_qinglong # 调用停止函数
     sleep 2 # 稍作等待确保进程停止
 
-    echo "--- 2. 删除青龙面板安装目录 ('$QL_DIR') ---"
+    echo "--- 2. 尝试去除开机自启动配置 ---"
+    remove_qinglong_autostart_entry # 调用去除自启动函数
+    sleep 1
+
+    echo "--- 3. 删除青龙面板安装目录 ('$QL_DIR') ---"
     if [ -d "$QL_DIR" ]; then
         read -p "确定要删除青龙面板安装目录 '$QL_DIR' 吗？这会删除所有数据！(y/N): " confirm_delete
         if [[ "$confirm_delete" == [yY] ]]; then
@@ -226,7 +245,7 @@ uninstall_qinglong() {
         echo "目录 '$QL_DIR' 不存在，跳过删除。"
     fi
 
-    echo "--- 3. 删除 Python 虚拟环境 ('$VENV_PATH') ---"
+    echo "--- 4. 删除 Python 虚拟环境 ('$VENV_PATH') ---"
     if [ -d "$VENV_PATH" ]; then
         rm -rf "$VENV_PATH"
         echo "虚拟环境 '$VENV_PATH' 已删除。"
@@ -234,7 +253,7 @@ uninstall_qinglong() {
         echo "虚拟环境 '$VENV_PATH' 不存在，跳过删除。"
     fi
 
-    echo "--- 4. 删除青龙启动脚本 ('$QL_START_SCRIPT') ---"
+    echo "--- 5. 删除青龙启动脚本 ('$QL_START_SCRIPT') ---"
     if [ -f "$QL_START_SCRIPT" ]; then
         rm -f "$QL_START_SCRIPT"
         echo "启动脚本 '$QL_START_SCRIPT' 已删除。"
@@ -242,7 +261,7 @@ uninstall_qinglong() {
         echo "启动脚本 '$QL_START_SCRIPT' 不存在，跳过删除。"
     fi
 
-    echo "--- 5. 清理 ~/.bashrc 中的环境变量 ---"
+    echo "--- 6. 清理 ~/.bashrc 中的环境变量 ---"
     local env_vars_to_remove=(
         "source $VENV_PATH/bin/activate"
         "export QL_DIR=$QL_DIR"
@@ -278,19 +297,18 @@ start_qinglong() {
         echo "已为 '$QL_START_SCRIPT' 添加执行权限。"
     fi
 
-    echo "--- 2. 尝试激活虚拟环境 (确保pm2等命令可用) ---"
+    echo "--- 2. 尝试激活虚拟环境并加载环境变量 (当前会话) ---"
+    # 对于当前交互式会话，确保环境变量和虚拟环境被加载
     if [ -f "$VENV_PATH/bin/activate" ]; then
         source "$VENV_PATH/bin/activate"
     else
         echo "警告：未找到虚拟环境激活脚本 '$VENV_PATH/bin/activate'。尝试在非虚拟环境启动。"
     fi
-    
-    # 确保环境变量在当前会话生效，以便 pm2 能够找到 node
     source ~/.bashrc 2>/dev/null # 尝试加载 bashrc 中的环境变量
 
-    echo "--- 3. 启动青龙面板 (通过 '$QL_START_SCRIPT') ---"
-    # docker-entrypoint.sh 通常使用 pm2 来启动青龙，并使之在后台运行
-    # 为了显示日志，我们先运行启动脚本，然后使用 pm2 logs
+    echo "--- 3. 启动青龙面板服务 (pm2 管理，后台运行) ---"
+    # docker-entrypoint.sh 脚本内部通常会使用 pm2 来启动青龙，并使其在后台运行
+    # 所以直接执行该脚本即可，不需要额外的 &
     (
         cd "$QL_DIR" # 切换到青龙目录执行启动脚本
         "$QL_START_SCRIPT"
@@ -301,9 +319,12 @@ start_qinglong() {
 
     echo "--- 4. 显示青龙面板实时日志 (按 Ctrl+C 停止查看日志并返回菜单) ---"
     if command_exists pm2; then
-        pm2 list # 显示 pm2 进程列表
+        echo "pm2 进程列表:"
+        pm2 list
+        echo ""
         echo "如果青龙未显示在 pm2 列表中，请检查 '$QL_START_SCRIPT' 的执行情况。"
         echo "正在显示 'qinglong' 进程的日志。按 Ctrl+C 停止查看日志。"
+        # pm2 logs --raw 默认会阻塞当前终端，直到 Ctrl+C
         pm2 logs qinglong --raw || echo "无法获取 'qinglong' 进程日志，可能服务未以该名称启动或 pm2 未运行。"
     else
         echo "警告：pm2 命令未找到。无法显示实时日志。请手动检查青龙面板状态。"
@@ -318,20 +339,18 @@ stop_qinglong() {
     if ! check_root; then return 1; fi
     echo "--- 开始停止青龙面板 ---"
 
-    echo "--- 1. 尝试激活虚拟环境 (确保pm2命令可用) ---"
+    echo "--- 1. 尝试激活虚拟环境并加载环境变量 (当前会话) ---"
     if [ -f "$VENV_PATH/bin/activate" ]; then
         source "$VENV_PATH/bin/activate"
     else
         echo "警告：未找到虚拟环境激活脚本 '$VENV_PATH/bin/activate'。尝试在非虚拟环境停止。"
     fi
-    
-    # 确保环境变量在当前会话生效
-    source ~/.bashrc 2>/dev/null
+    source ~/.bashrc 2>/dev/null # 尝试加载 bashrc 中的环境变量
 
     echo "--- 2. 尝试停止 pm2 中的青龙进程 ---"
     if command_exists pm2; then
         if pm2 list | grep -q "qinglong"; then
-            echo "找到 pm2 中的 'qinglong' 进程，正在停止..."
+            echo "找到 pm2 中的 'qinglong' 进程，正在停止并删除..."
             pm2 stop qinglong
             pm2 delete qinglong # 停止并从 pm2 列表中删除
             echo "青龙面板服务已停止并从 pm2 列表中移除。"
@@ -355,24 +374,55 @@ stop_qinglong() {
     echo "--- 青龙面板停止操作完成。---"
 }
 
-# 显示自启动配置说明
-autostart_qinglong_instructions() {
-    echo "--- 青龙面板自启动配置说明 ---"
-    echo "要配置青龙面板自启动，你需要确保 '$QL_START_SCRIPT' 在系统启动时运行。"
-    echo "因为安装时已将相关环境变量和虚拟环境激活命令添加到 ~/.bashrc，并且 '$QL_START_SCRIPT' 也会被复制到 /root/，所以最简单的自启动方式通常是通过 crontab @reboot。"
-    echo ""
-    echo "1. 编辑 crontab:"
-    echo "   crontab -e"
-    echo ""
-    echo "2. 在文件末尾添加以下行，确保路径和命令正确:"
-    echo "   @reboot /bin/bash $QL_START_SCRIPT > /var/log/qinglong_autostart.log 2>&1"
-    echo ""
-    echo "   这会在系统重启时执行 '$QL_START_SCRIPT'，并将所有输出重定向到日志文件 '/var/log/qinglong_autostart.log'。"
-    echo ""
-    echo "3. 保存并退出 crontab 编辑器。"
-    echo ""
-    echo "注意：如果你的系统使用 systemd，你可以创建一个 systemd 服务来更精细地管理青龙面板的启动和停止。"
-    echo "--- 自启动配置说明结束 ---"
+# 设置开机自启动
+set_qinglong_autostart_entry() {
+    if ! check_root; then return 1; fi
+    echo "--- 开始设置青龙面板开机自启动 ---"
+
+    if [ ! -f "$QL_START_SCRIPT" ]; then
+        echo "错误：青龙启动脚本 '$QL_START_SCRIPT' 不存在。请先执行安装命令。"
+        return 1
+    fi
+
+    # 清除旧的自启动配置，避免重复
+    remove_qinglong_autostart_entry
+
+    # 使用 bash -lc 确保 cron 作业在登录 shell 环境中运行，从而加载 ~/.bashrc
+    local CRON_JOB="@reboot /bin/bash -lc \"$QL_START_SCRIPT > $QL_AUTOSTART_LOG 2>&1\""
+
+    (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
+    if [ $? -eq 0 ]; then
+        echo "青龙面板开机自启动已成功设置。"
+        echo "启动日志将被记录到 '$QL_AUTOSTART_LOG'。"
+    else
+        echo "错误：设置青龙面板开机自启动失败。请检查 crontab 配置或权限。"
+        return 1
+    fi
+    echo "--- 青龙面板开机自启动设置完成。---"
+}
+
+# 去除开机自启动
+remove_qinglong_autostart_entry() {
+    if ! check_root; then return 1; fi
+    echo "--- 开始去除青龙面板开机自启动 ---"
+
+    # 构建用于匹配的 cron job 字符串
+    local CRON_JOB_PATTERN="@reboot /bin/bash -lc \"$QL_START_SCRIPT > $QL_AUTOSTART_LOG 2>&1\""
+    # 针对 grep 和 sed 转义特殊字符
+    local ESCAPED_CRON_JOB_PATTERN=$(echo "$CRON_JOB_PATTERN" | sed 's/[\/&]/\\&/g')
+
+    if crontab -l 2>/dev/null | grep -q "$ESCAPED_CRON_JOB_PATTERN"; then
+        crontab -l 2>/dev/null | grep -v "$ESCAPED_CRON_JOB_PATTERN" | crontab -
+        if [ $? -eq 0 ]; then
+            echo "青龙面板开机自启动已成功去除。"
+        else
+            echo "错误：去除青龙面板开机自启动失败。请检查 crontab 配置或权限。"
+            return 1
+        fi
+    else
+        echo "未找到青龙面板的开机自启动配置，无需去除。"
+    fi
+    echo "--- 青龙面板开机自启动去除完成。---"
 }
 
 # 退出脚本
@@ -439,13 +489,16 @@ handle_command() {
         4|stop)
             stop_qinglong
             ;;
-        5|autostart)
-            autostart_qinglong_instructions
+        5|set_autostart)
+            set_qinglong_autostart_entry
             ;;
-        6|update)
+        6|remove_autostart)
+            remove_qinglong_autostart_entry
+            ;;
+        7|update)
             update_script # update_script 会自行退出
             ;;
-        7|exit)
+        8|exit)
             exit_script
             ;;
         *)
@@ -460,7 +513,7 @@ handle_command() {
 if [ -n "$1" ]; then
     handle_command "$1"
     # 如果命令不是 update 或 exit，则继续进入交互式菜单
-    if [[ "$1" != "update" && "$1" != "exit" && "$1" != "6" && "$1" != "7" ]]; then
+    if [[ "$1" != "update" && "$1" != "exit" && "$1" != "7" && "$1" != "8" ]]; then
         echo ""
         read -p "按 Enter 返回主菜单..."
     fi
@@ -478,9 +531,10 @@ while true; do
         2) command_to_execute="uninstall" ;;
         3) command_to_execute="start" ;;
         4) command_to_execute="stop" ;;
-        5) command_to_execute="autostart" ;;
-        6) command_to_execute="update" ;;
-        7) command_to_execute="exit" ;;
+        5) command_to_execute="set_autostart" ;;
+        6) command_to_execute="remove_autostart" ;;
+        7) command_to_execute="update" ;;
+        8) command_to_execute="exit" ;;
         *) command_to_execute="$choice" ;; # 否则直接使用用户输入的命令名称
     esac
 
